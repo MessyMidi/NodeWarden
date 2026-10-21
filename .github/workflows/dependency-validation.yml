@@ -20,6 +20,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
           node-version-file: .node-version
@@ -34,6 +35,7 @@ jobs:
           npm run test:notifications-security
           npm run test:vault-compatibility
           npm run test:password-verifier
+          npm run test:password-verifier-compatibility
           npm run test:export-compatibility
           npm run i18n:validate
           node --import tsx scripts/security-audit-backup-auth-state.mjs
@@ -48,3 +50,5 @@ jobs:
           npx --no-install wrangler deploy --dry-run -c wrangler.kv.toml --outdir build/dependency-audit/bundle-kv --metafile build/dependency-audit/bundle-kv.json
       - name: Local runtime, native image adapter and bundle isolation
         run: npm run test:dependency-toolchain
+      - name: Cross-version password rollback on isolated D1
+        run: npm run test:rollback-compatibility
