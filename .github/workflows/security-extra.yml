@@ -97,6 +97,25 @@ jobs:
             semgrep/semgrep:latest \
             semgrep scan --config p/default --error --sarif --output semgrep.sarif .
 
+      - name: Summarize actual Semgrep findings
+        if: ${{ !cancelled() && hashFiles('semgrep.sarif') != '' }}
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const sarif = JSON.parse(fs.readFileSync('semgrep.sarif', 'utf8'));
+          for (const run of sarif.runs || []) {
+            for (const result of run.results || []) {
+              const location = result.locations?.[0]?.physicalLocation;
+              console.log(JSON.stringify({
+                rule: result.ruleId,
+                file: location?.artifactLocation?.uri,
+                line: location?.region?.startLine,
+                message: result.message?.text,
+              }));
+            }
+          }
+          NODE
+
       - name: Upload Semgrep SARIF
         if: ${{ !cancelled() && hashFiles('semgrep.sarif') != '' }}
         uses: github/codeql-action/upload-sarif@411bbbe57033eedfc1a82d68c01345aa96c737d7

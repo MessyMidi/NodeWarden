@@ -99,7 +99,7 @@
   安全审计 job 使用 `npm ci --ignore-scripts`，避免只为审计执行依赖安装脚本。
 - 保留 OSV 的原有可复用工作流、扫描范围、SARIF 上传和 `fail-on-vuln: true`。
 - 原 Semgrep 步骤还存在 `|| true` 和伪造空 SARIF 的成功路径；移除这两个路径，添加 `--error`。
-  有发现或扫描器错误时如实失败，有实际 SARIF 时失败后仍上传。没有删除扫描或加入全局忽略。
+  有发现或扫描器错误时如实失败，有实际 SARIF 时失败后仍打印发现摘要并上传。没有删除扫描或加入全局忽略。
 - 新增 Dependency Compatibility，在 Node 24 / Linux 上运行安装、现有回归、Worker 类型检查、
   demo 构建、R2/KV dry-run、Miniflare 实测及产物隔离检查；不使用 Cloudflare 凭证。
   默认前端构建由两次 dry-run 的原有 build hook 执行。
@@ -149,6 +149,17 @@ npm audit --omit=dev
 ```
 
 ## 合并前
+
+### GitHub 实测记录
+
+- [OSV / npm 等安全扫描](https://github.com/MessyMidi/NodeWarden/actions/runs/39581562823)：
+  OSV 从基线 25 项降为 **2 项**（braces 和 selector parser），即消除 23 项原始发现
+  （21 个独立公告，含重复版本计数）。npm 锁文件安装成功，audit 如预期因剩余项失败。
+- [Linux Dependency Compatibility](https://github.com/MessyMidi/NodeWarden/actions/runs/39581570533)：
+  **全部通过**，包括 npm ci、26 项回归、Worker 类型检查、demo、两种 dry-run、Miniflare
+  本地运行、glibc Linux 上的 sharp 图片转换和两份 357 输入的产物检查。
+- actionlint、zizmor、Gitleaks 通过。Semgrep 成功执行扫描并发现 **12 项**源码提示，因移除
+  吞错逻辑而如实失败；这不是本次依赖升级新产生的 12 个依赖漏洞。补充日志摘要以便逐项核对。
 
 - 查看本 PR 最新提交的 GitHub 扫描日志，确认只有已解释的依赖剩余项；新的 Semgrep 失败也需要
   看实际日志，不能通过恢复吞错来变绿。若分支保护要求所有安全检查绿色，本 PR 不会绕过它。
