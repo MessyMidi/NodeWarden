@@ -31,6 +31,7 @@ jobs:
           npm run test:config-compatibility
           npm run test:web-crypto
           npm run test:webauthn-connectors
+          npm run test:password-verifier-compatibility
           npm run i18n:validate
           node --import tsx scripts/security-audit-backup-auth-state.mjs
           node --import tsx scripts/security-audit-api-key-semantics.mjs

@@ -1,5 +1,8 @@
 # 分阶段上游同步（2026-10-21）
 
+2026-10-22 补充：PR #3 增加 `$s2$` 读取兼容层，作为迁移前先发布的回滚基线；
+它仍使用旧写入器且不自动迁移。详见 `ROLLBACK_COMPATIBILITY.md`。
+
 基线为本仓库 main `993d890a1ee2f5ed7e94b2e2c4d9b1345d177edc`，已经包含 PR #1 和 PR #2。
 上游固定为 `shuaiplus/nodewarden@cb871095c1e348b8f784492cf0e479d124142f8b`，不在测试期间追逐变化的 main。
 
