@@ -1,0 +1,45 @@
+name: Dependency Compatibility
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  WRANGLER_SEND_METRICS: "false"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+      - name: Existing regression tests
+        run: |
+          npm run test:config-compatibility
+          npm run test:web-crypto
+          npm run test:webauthn-connectors
+          npm run i18n:validate
+          node --import tsx scripts/security-audit-backup-auth-state.mjs
+          node --import tsx scripts/security-audit-api-key-semantics.mjs
+          npx --no-install tsc --noEmit
+      - name: Build demo
+        run: npm run build:demo
+      - name: Package both Worker storage configurations without deploying
+        run: |
+          npx --no-install wrangler deploy --dry-run -c wrangler.toml --outdir build/dependency-audit/bundle-r2 --metafile build/dependency-audit/bundle-r2.json
+          npx --no-install wrangler deploy --dry-run -c wrangler.kv.toml --outdir build/dependency-audit/bundle-kv --metafile build/dependency-audit/bundle-kv.json
+      - name: Local runtime, native image adapter and bundle isolation
+        run: npm run test:dependency-toolchain

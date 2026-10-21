@@ -48,8 +48,8 @@ jobs:
       upload-sarif: true
       fail-on-vuln: true
 
-  pnpm-audit:
-    name: pnpm audit
+  npm-audit:
+    name: npm audit
     runs-on: ubuntu-latest
 
     permissions:
@@ -64,19 +64,15 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
-          node-version: 22
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
 
-      - name: Run pnpm audit
-        shell: bash
-        run: |
-          if [ ! -f pnpm-lock.yaml ]; then
-            echo "pnpm-lock.yaml not found, skip pnpm audit."
-            exit 0
-          fi
+      - name: Validate npm lockfile without running dependency scripts
+        run: npm ci --ignore-scripts
 
-          corepack enable
-          corepack prepare pnpm@10 --activate
-          pnpm audit --audit-level=high
+      - name: Audit all npm dependencies
+        run: npm audit
 
   semgrep:
     name: Semgrep CE Scan
@@ -99,30 +95,29 @@ jobs:
             -v "${PWD}:/src" \
             -w /src \
             semgrep/semgrep:latest \
-            semgrep scan --config p/default --sarif --output semgrep.sarif . || true
+            semgrep scan --config p/default --error --sarif --output semgrep.sarif .
 
-          if [ ! -f semgrep.sarif ]; then
-            cat > semgrep.sarif <<'EOF'
-          {
-            "version": "2.1.0",
-            "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
-            "runs": [
-              {
-                "tool": {
-                  "driver": {
-                    "name": "Semgrep",
-                    "informationUri": "https://semgrep.dev",
-                    "rules": []
-                  }
-                },
-                "results": []
-              }
-            ]
+      - name: Summarize actual Semgrep findings
+        if: ${{ !cancelled() && hashFiles('semgrep.sarif') != '' }}
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const sarif = JSON.parse(fs.readFileSync('semgrep.sarif', 'utf8'));
+          for (const run of sarif.runs || []) {
+            for (const result of run.results || []) {
+              const location = result.locations?.[0]?.physicalLocation;
+              console.log(JSON.stringify({
+                rule: result.ruleId,
+                file: location?.artifactLocation?.uri,
+                line: location?.region?.startLine,
+                message: result.message?.text,
+              }));
+            }
           }
-          EOF
-          fi
+          NODE
 
       - name: Upload Semgrep SARIF
+        if: ${{ !cancelled() && hashFiles('semgrep.sarif') != '' }}
         uses: github/codeql-action/upload-sarif@411bbbe57033eedfc1a82d68c01345aa96c737d7
         with:
           sarif_file: semgrep.sarif
