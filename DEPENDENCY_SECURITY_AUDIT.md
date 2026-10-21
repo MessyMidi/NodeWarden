@@ -159,7 +159,24 @@ npm audit --omit=dev
   **全部通过**，包括 npm ci、26 项回归、Worker 类型检查、demo、两种 dry-run、Miniflare
   本地运行、glibc Linux 上的 sharp 图片转换和两份 357 输入的产物检查。
 - actionlint、zizmor、Gitleaks 通过。Semgrep 成功执行扫描并发现 **12 项**源码提示，因移除
-  吞错逻辑而如实失败；这不是本次依赖升级新产生的 12 个依赖漏洞。补充日志摘要以便逐项核对。
+  吞错逻辑而如实失败；这不是本次依赖升级新产生的 12 个依赖漏洞。CodeQL 两种语言检查也通过。
+
+### Semgrep 的 12 条保留提示
+
+[可见的逐条扫描摘要](https://github.com/MessyMidi/NodeWarden/actions/runs/39581926739/job/119161359096)
+列出了规则、位置和理由。原始主分支日志同样记录 12 条发现；当前这些位置全部在本 PR 未修改的文件中。
+本次只核对这些特定告警的输入来源，不据此宣称相应业务模块已经通过全面安全审计，也没有添加 suppression。
+
+| 位置 / 条数 | 实际检查与处理理由 |
+| --- | --- |
+| `.github/dependabot.yml:4,22`（2） | 未设置 dependency cooldown，是供应链加固建议，不是发现了已利用漏洞。本 PR 保留原有自动更新策略；后续可单独评估新增版本等待期与及时补安全补丁的取舍。 |
+| `scripts/i18n-utils.cjs:24,38`（2） | 路径拼接。当前读取调用来自 `i18n-validate.cjs` 的固定 `localeFiles` 列表；写入 helper 未发现仓库内调用。未发现 HTTP/用户输入到文件名的路径，只影响可信本地维护脚本。不要将此 helper 暴露为接收任意路径的服务。 |
+| `scripts/security-audit-backup-auth-state.mjs:23`（1） | 动态正则的表名来自测试内部的固定表列表；没有处理外部输入，不构成报告所假设的正则注入路径。 |
+| `src/handlers/accounts.ts:193,202`（2） | 两个函数只是沿固定字段数组读取对象，把读取结果赋给局部变量，没有写入对象属性/原型；现有调用的路径都是代码常量。该告警没有证明存在原型污染写入。 |
+| `src/router-devices.ts:26`（1） | 正则 pattern 来自路由内部的常量字符串，用户请求路径是待匹配文本，不是正则表达式来源；未发现规则所提示的攻击者控制 pattern。 |
+| `src/services/backup-import.ts:98`（1） | 表名来自固定 `BACKUP_TABLES` 循环，而非导入文件的任意 key。没有发现用户控制正则源码的路径。 |
+| `src/services/backup-uploader.ts:131,141`（2） | XML 标签名来自 `response`、`href`、`Contents` 等内部常量；上游 XML 是被匹配文本，不是 tagName。当前提示的动态正则注入前提不成立；这不排除其他 XML 长度/性能问题，恶意 XML 的专项性能测试可后续单独进行。 |
+| `webapp/src/hooks/useVaultSendActions.ts:540`（1） | `createCipher` 从 `@/lib/api/vault` 导入，是本项目创建金库条目的 HTTP API helper；不是 Node `crypto.createCipher`。该规则按同名函数误报，不能据此认定加密 IV 固定。 |
 
 - 查看本 PR 最新提交的 GitHub 扫描日志，确认只有已解释的依赖剩余项；新的 Semgrep 失败也需要
   看实际日志，不能通过恢复吞错来变绿。若分支保护要求所有安全检查绿色，本 PR 不会绕过它。
