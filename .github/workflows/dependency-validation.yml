@@ -35,6 +35,7 @@ jobs:
           node --import tsx scripts/security-audit-backup-auth-state.mjs
           node --import tsx scripts/security-audit-api-key-semantics.mjs
           npx --no-install tsc --noEmit
+          npx --no-install tsc --noEmit -p webapp/tsconfig.json
       - name: Build demo
         run: npm run build:demo
       - name: Package both Worker storage configurations without deploying

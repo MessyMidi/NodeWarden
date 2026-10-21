@@ -1,5 +1,9 @@
 # 依赖安全审计（2026-10-21）
 
+> 后续更新：分阶段上游同步的第一阶段已迁移到 Tailwind CSS 4，移除了本报告保留的 braces 和
+> postcss-selector-parser 6.x。原始审计结论作为历史保留；当前版本和验证结果见
+> [UPSTREAM_INTEGRATION.md](./UPSTREAM_INTEGRATION.md)。
+
 ## 范围与结论
 
 基线为 `8ca838a66997c97e90e9cfb059bbea5e12d2f3b6`（PR #1 合并结果），参考
