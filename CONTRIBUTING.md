@@ -119,6 +119,15 @@ For new locales, update:
 
 ## Recommended Checks
 
+Use the Node.js version in `.node-version` for local and Cloudflare builds.
+Cloudflare Pages and Workers Builds read this file automatically. If a project
+sets `NODE_VERSION` in its dashboard, keep it aligned with this file.
+
+When regenerating the lockfile, use a directory without `node_modules` and
+verify `npm ci` with npm 10.9.2, the version used by Cloudflare's build image.
+Include optional dependencies so the lockfile also covers native and WASM
+dependencies on other platforms.
+
 For most backend or shared changes:
 
 ```sh
