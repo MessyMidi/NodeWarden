@@ -55,7 +55,7 @@ Miniflare Worker，始终挂载同一个本机临时 D1，所有外部请求在 
 `resourcePersistencePath`，避免旧 `d1Persist` 被转换器忽略，确保切换后使用同一数据库。
 YubiKey、硬件 WebAuthn 和真实官方安装包未实测，不能从 TOTP 结果推定这些场景全部通过。
 
-## WebSocket：仍有正式发布阻断项
+## WebSocket：补充审查发现及本轮修复
 
 已读取官方 [SignalRConnectionService 固定源码](https://github.com/bitwarden/clients/blob/be779078cf1a763bc31e6f547423f205117190e8/libs/common/src/platform/server-notifications/internal/signalr-connection.service.ts)：
 共享 JS 实现设置 `skipNegotiation: true`、`HttpTransportType.WebSockets`、
@@ -67,19 +67,16 @@ YubiKey、硬件 WebAuthn 和真实官方安装包未实测，不能从 TOTP 结
 这三个 tag 的同一文件均为 blob `033e2b61d156942e621fc35540945220109656b9`，配置完全相同，
 不是只根据尚未发布的 main 作出判断。
 
-隔离 Worker 已用真实用户令牌、标准 WebSocket 升级头，复现官方浏览器直连请求形态得到 401。
-这是确定的协议冲突，不是因为没有安装客户端就猜测不兼容。测试中的 401 断言是安全负向回归，
-不代表官方客户端通知成功；完整的官方客户端通知端到端测试尚未通过。
-
-**因此现在不要发布 PR #4/#5。** 原生客户端若实际携带 Authorization header，代码路径可以接收，
-但本轮未运行真实桌面/iOS/Android 安装包；移动系统推送也不属于此 WebSocket 证明范围。
-尚未完整验证 101/MessagePack 收发/断线重连。没有恢复 URL 访问 JWT、跳过认证或删除安全测试
-来消除这个问题。需要先确定兼容官方客户端的认证方案或拆分此通知改动，并单独完成协议回归。
+上轮在隔离 Worker 使用虚构账号的有效访问令牌复现了 401，曾作为发布阻断。
+本轮按用户批准的官方兼容协议，在精确 Hub GET WebSocket 入口接受完整验证的 URL JWT，
+保留 Header 与一次性票据，并在内部转发前清除原始凭证。实际 SignalR/MessagePack 10 浏览器
+协议库对真实 Worker 的 101、通知收发、关闭/重连、过期/撤销验证已通过；原 401 一律拒绝
+断言已替换为协议相符的正/负测试。详细风险、结果及未验证范围见 `NOTIFICATION_COMPATIBILITY.md`。
 
 ## 当前结论
 
 密码格式回滚阻断已通过先部署兼容读取器、保留最新存储数据的方案解决。PR #3 可单独审查发布，
-但 PR #4/#5 仍被上述通知协议冲突阻断。待该问题解决并复验后，正式顺序为兼容基线 → PR #4
+本轮已修复并验证该通知协议冲突。正式顺序仍为兼容基线 → PR #4
 → PR #5；紧急回滚使用事先记录的兼容基线 Version ID，保持当前 D1/R2/KV/DO 内容，不回滚数据库。
 具体回退优先采用最小范围：PR #5 的工具链/界面问题先退到已验证的 PR #4 发布；若要撤回 PR #4，
 才退到 PR #3 的兼容读取器发布。两条路径都保留当前存储，严禁退到未补丁旧版。

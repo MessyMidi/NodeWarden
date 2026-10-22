@@ -52,3 +52,5 @@ jobs:
         run: npm run test:dependency-toolchain
       - name: Cross-version password rollback on isolated D1
         run: npm run test:rollback-compatibility
+      - name: Official browser SignalR and MessagePack protocol on isolated Workers
+        run: npm run test:notifications-protocol

@@ -1,7 +1,7 @@
-import { AuthService } from '../services/auth';
 import { StorageService } from '../services/storage';
 import { isAuthRequestExpired } from '../services/storage-auth-request-repo';
-import type { Env, JWTPayload } from '../types';
+import type { Env } from '../types';
+import { authenticateNotificationToken, isNotificationSessionCurrent, type NotificationSession } from '../services/notification-auth';
 import { errorResponse, jsonResponse } from '../utils/response';
 import { generateUUID } from '../utils/uuid';
 import {
@@ -17,16 +17,15 @@ function extractAccessToken(request: Request): string | null {
   return match?.[1]?.trim() || null;
 }
 
-async function authenticateAccessToken(request: Request, env: Env): Promise<JWTPayload | null> {
+async function authenticateAccessToken(request: Request, env: Env): Promise<NotificationSession | null> {
   const accessToken = extractAccessToken(request);
   if (!accessToken) return null;
 
-  const auth = new AuthService(env);
-  return auth.verifyAccessToken(`Bearer ${accessToken}`);
+  return authenticateNotificationToken(accessToken, env);
 }
 
-async function issueWebSocketConnectionToken(payload: JWTPayload, env: Env): Promise<string> {
-  const expiresAt = Date.now() + WEBSOCKET_CONNECTION_TOKEN_TTL_MS;
+async function issueWebSocketConnectionToken(payload: NotificationSession, env: Env): Promise<string> {
+  const expiresAt = Math.min(Date.now() + WEBSOCKET_CONNECTION_TOKEN_TTL_MS, payload.exp * 1000);
   const token = await createWebSocketConnectionToken(payload.sub, expiresAt, env.JWT_SECRET);
   const id = env.NOTIFICATIONS_HUB.idFromName(payload.sub);
   const stub = env.NOTIFICATIONS_HUB.get(id);
@@ -38,13 +37,14 @@ async function issueWebSocketConnectionToken(payload: JWTPayload, env: Env): Pro
       userId: payload.sub,
       deviceIdentifier: payload.did || null,
       expiresAt,
+      session: payload,
     }),
   });
   if (!response.ok) throw new Error('Failed to issue websocket connection token');
   return token;
 }
 
-async function consumeWebSocketConnectionToken(request: Request, env: Env): Promise<JWTPayload | null> {
+async function consumeWebSocketConnectionToken(request: Request, env: Env): Promise<NotificationSession | null> {
   const token = String(new URL(request.url).searchParams.get('id') || '').trim();
   const claims = await verifyWebSocketConnectionToken(token, env.JWT_SECRET);
   if (!claims) return null;
@@ -63,22 +63,21 @@ async function consumeWebSocketConnectionToken(request: Request, env: Env): Prom
   const connection = (await response.json().catch(() => null)) as {
     userId?: string;
     deviceIdentifier?: string | null;
+    session?: NotificationSession;
   } | null;
-  if (connection?.userId !== claims.userId) return null;
-
-  return {
-    sub: claims.userId,
-    did: String(connection.deviceIdentifier || '').trim() || undefined,
-  } as JWTPayload;
+  if (connection?.userId !== claims.userId || connection.session?.sub !== claims.userId) return null;
+  return await isNotificationSessionCurrent(connection.session, env) ? connection.session : null;
 }
 
-async function authenticateNotificationsHub(request: Request, env: Env): Promise<JWTPayload | null> {
-  // Never accept an access JWT from the URL: URLs are routinely retained by logs,
-  // browser history, proxies, monitoring, and error tracking systems.
+async function authenticateNotificationsHub(request: Request, env: Env): Promise<NotificationSession | null> {
+  // Explicit credentials fail closed: no fallback from a bad header or ticket.
   if (request.headers.has('Authorization')) {
     return authenticateAccessToken(request, env);
   }
-  return consumeWebSocketConnectionToken(request, env);
+  const query = new URL(request.url).searchParams;
+  if (query.has('id')) return query.getAll('id').length === 1 ? consumeWebSocketConnectionToken(request, env) : null;
+  const tokens = query.getAll('access_token');
+  return tokens.length === 1 ? authenticateNotificationToken(tokens[0], env) : null;
 }
 
 export async function handleNotificationsNegotiate(request: Request, env: Env): Promise<Response> {
@@ -104,6 +103,9 @@ export async function handleNotificationsNegotiate(request: Request, env: Env): 
 }
 
 export async function handleNotificationsHub(request: Request, env: Env): Promise<Response> {
+  if (new URL(request.url).pathname !== '/notifications/hub' || request.method !== 'GET') {
+    return errorResponse('Not found', 404);
+  }
   if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
     return errorResponse('Expected websocket', 426);
   }
@@ -113,12 +115,19 @@ export async function handleNotificationsHub(request: Request, env: Env): Promis
   const userId = payload.sub;
   const id = env.NOTIFICATIONS_HUB.idFromName(userId);
   const stub = env.NOTIFICATIONS_HUB.get(id);
-  const forwardedUrl = new URL(request.url);
+  // Official clients cannot set Authorization on a browser WebSocket. Accept
+  // their URL JWT only here, then discard all client query parameters internally.
+  const forwardedUrl = new URL('https://notifications/notifications/hub');
   forwardedUrl.searchParams.set('nw_uid', userId);
   if (payload.did) {
     forwardedUrl.searchParams.set('nw_did', payload.did);
   }
-  return stub.fetch(new Request(forwardedUrl.toString(), request));
+  const headers = new Headers(request.headers);
+  headers.delete('Authorization');
+  headers.delete('Cookie');
+  headers.delete('Referer');
+  headers.set('X-NodeWarden-Session', JSON.stringify(payload));
+  return stub.fetch(new Request(forwardedUrl.toString(), { method: 'GET', headers }));
 }
 
 export async function handleAnonymousNotificationsHub(request: Request, env: Env): Promise<Response> {
@@ -137,7 +146,9 @@ export async function handleAnonymousNotificationsHub(request: Request, env: Env
 
   const id = env.NOTIFICATIONS_HUB.idFromName(authRequestId);
   const stub = env.NOTIFICATIONS_HUB.get(id);
-  const forwardedUrl = new URL(request.url);
+  const forwardedUrl = new URL('https://notifications/notifications/anonymous-hub');
   forwardedUrl.searchParams.set('nw_auth_request_id', authRequestId);
-  return stub.fetch(new Request(forwardedUrl.toString(), request));
+  const headers = new Headers(request.headers);
+  for (const name of ['Authorization', 'Cookie', 'Referer', 'X-NodeWarden-Session']) headers.delete(name);
+  return stub.fetch(new Request(forwardedUrl.toString(), { method: 'GET', headers }));
 }
