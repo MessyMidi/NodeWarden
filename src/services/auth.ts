@@ -2,6 +2,7 @@ import { Env, JWTPayload, User } from '../types';
 import { verifyJWT, createJWT, createRefreshToken } from '../utils/jwt';
 import { getRefreshTokenSlidingTtlMs, LIMITS } from '../config/limits';
 import { StorageService } from './storage';
+import { verifyPasswordVerifier } from './password-verifier';
 
 // Server-side iterations for second-layer hashing.
 // The client already does heavy PBKDF2 (600k iterations).
@@ -157,24 +158,10 @@ export class AuthService {
     return SERVER_HASH_PREFIX + btoa(binary);
   }
 
-  // Verify password: new rows use server-side hashing; legacy rows store the raw client hash.
-  async verifyPassword(inputHash: string, storedHash: string, email: string): Promise<boolean> {
-    if (!storedHash.startsWith(SERVER_HASH_PREFIX)) {
-      return this.constantTimeEquals(inputHash, storedHash);
-    }
-    const serverHash = await this.hashPasswordServer(inputHash, email);
-    return this.constantTimeEquals(serverHash, storedHash);
-  }
-
-  private constantTimeEquals(a: string, b: string): boolean {
-    const encA = new TextEncoder().encode(a);
-    const encB = new TextEncoder().encode(b);
-    if (encA.length !== encB.length) return false;
-    let diff = 0;
-    for (let i = 0; i < encA.length; i++) {
-      diff |= encA[i] ^ encB[i];
-    }
-    return diff === 0;
+  // Rollback baseline: read both formats, but keep the legacy writer and do not
+  // migrate on login. Deploy this reader before any version starts writing $s2$.
+  async verifyPassword(inputHash: string, storedHash: string | null, email: string): Promise<boolean> {
+    return verifyPasswordVerifier(inputHash, storedHash, email);
   }
 
   // Generate access token
