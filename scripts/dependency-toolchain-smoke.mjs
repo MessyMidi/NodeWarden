@@ -165,7 +165,7 @@ for (const variant of ['r2', 'kv']) {
   const meta = JSON.parse(fs.readFileSync(path.join(bundleDir, `bundle-${variant}.json`), 'utf8'));
   const inputs = Object.keys(meta.inputs);
   const forbidden = inputs.filter((input) =>
-    /(?:^|[/\\])node_modules[/\\](?:wrangler|miniflare|undici|sharp|tailwindcss|@tailwindcss|postcss(?:-selector-parser)?|braces|nanoid|source-map-js|browserslist|baseline-browser-mapping|@babel)(?:[/\\]|$)/.test(input)
+    /(?:^|[/\\])node_modules[/\\](?:wrangler|miniflare|undici|sharp|tailwindcss|@tailwindcss|postcss(?:-selector-parser)?|braces|nanoid|source-map-js|browserslist|baseline-browser-mapping|@babel|@microsoft[/\\]signalr(?:-protocol-msgpack)?)(?:[/\\]|$)/.test(input)
   );
   assert.deepEqual(forbidden, [], 'Audited development tools must stay out of the Worker bundle');
   console.log(`${variant}: checked ${inputs.length} Worker bundle inputs; no audited development tools bundled`);

@@ -212,7 +212,10 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
 
     return errorResponse('Not found', 404);
   } catch (error) {
-    console.error('Request error:', error);
+    // WebSocket URLs can contain bearer credentials for official clients. Never
+    // serialize arbitrary exception messages/stacks from these request paths.
+    if (path.startsWith('/notifications/')) console.error('Notification request failed');
+    else console.error('Request error:', error);
     return errorResponse('Internal server error', 500);
   }
 }

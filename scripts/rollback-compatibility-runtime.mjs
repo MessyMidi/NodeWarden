@@ -4,7 +4,6 @@ import path from 'node:path';
 import os from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import http from 'node:http';
 import { pbkdf2, hkdfExpand, bytesToBase64, encryptBw, decryptBw, decryptStr, calcTotpNow } from '../webapp/src/lib/crypto.ts';
 
 const root = process.cwd();
@@ -13,6 +12,7 @@ const revisions = JSON.parse(fs.readFileSync(new URL('./rollback-baseline.json',
 const require = createRequire(import.meta.url);
 const wranglerRequire = createRequire(require.resolve('wrangler/package.json'));
 const { Miniflare, convertV4MiniflareOptions } = wranglerRequire('miniflare');
+const LocalWebSocket = createRequire(wranglerRequire.resolve('miniflare'))('ws');
 const wrangler = path.join(path.dirname(require.resolve('wrangler/package.json')), 'bin', 'wrangler.js');
 const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
 
@@ -192,16 +192,20 @@ try {
   // Reproduce the official browser client's skipNegotiation request shape. It
   // carries access_token in the URL, not an Authorization header or id ticket.
   const url = new URL('/notifications/hub', await worker.ready);
+  url.protocol = 'ws:';
   url.searchParams.set('access_token', forward.body.access_token);
-  const status = await new Promise((resolve, reject) => {
-    const request = http.get(url, { headers: { Connection: 'Upgrade', Upgrade: 'websocket', 'Sec-WebSocket-Version': '13', 'Sec-WebSocket-Key': 'dGhlIHNhbXBsZSBub25jZQ==' } }, (response) => {
-      response.resume(); response.once('end', () => resolve(response.statusCode));
-    });
-    request.once('upgrade', (_response, socket) => { socket.destroy(); reject(new Error('URL access JWT unexpectedly accepted')); });
-    request.once('error', reject);
+  const socket = new LocalWebSocket(url);
+  await new Promise((resolve, reject) => {
+    socket.once('upgrade', response => assert.equal(response.statusCode, 101));
+    socket.once('open', resolve);
+    socket.once('error', reject);
   });
-  assert.equal(status, 401);
-  console.log('PASS: forward re-upgrade preserves data; official browser direct-JWT WebSocket shape reproduces HTTP 401 (documented compatibility BLOCKER)');
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { socket.terminate(); reject(new Error('WebSocket close timed out')); }, 5000);
+    socket.once('close', () => { clearTimeout(timer); resolve(); });
+    socket.close(1000, 'local test complete');
+  });
+  console.log('PASS: forward re-upgrade preserves data; official direct-JWT WebSocket upgrades with 101 and closes cleanly');
 } finally {
   if (worker) await worker.dispose();
   assert.equal(path.dirname(temporary), path.resolve(os.tmpdir()));

@@ -2,6 +2,8 @@
 
 2026-10-22 补充：PR #3 增加 `$s2$` 读取兼容层，作为迁移前先发布的回滚基线；
 它仍使用旧写入器且不自动迁移。详见 `ROLLBACK_COMPATIBILITY.md`。
+本轮已按官方 SignalR 协议修复通知直连，并保留 Header/一次性票据；验证和 URL 日志剩余风险
+见 `NOTIFICATION_COMPATIBILITY.md`。上轮通知阻断的历史结论已更新。
 
 基线为本仓库 main `993d890a1ee2f5ed7e94b2e2c4d9b1345d177edc`，已经包含 PR #1 和 PR #2。
 上游固定为 `shuaiplus/nodewarden@cb871095c1e348b8f784492cf0e479d124142f8b`，不在测试期间追逐变化的 main。

@@ -1,6 +1,7 @@
 import { DurableObject, waitUntil } from 'cloudflare:workers';
 import type { Env } from '../types';
 import { notifyMobilePush } from '../services/push-relay';
+import { isNotificationSession, isNotificationSessionCurrent, type NotificationSession } from '../services/notification-auth';
 
 const SIGNALR_RECORD_SEPARATOR = 0x1e;
 const SIGNALR_HANDSHAKE_ACK = new Uint8Array([0x7b, 0x7d, SIGNALR_RECORD_SEPARATOR]);
@@ -32,12 +33,14 @@ interface WsAttachment {
   handshakeComplete: boolean;
   protocol: HubProtocol;
   deviceIdentifier: string | null;
+  session?: NotificationSession;
 }
 
 interface WebSocketConnectionToken {
   userId: string;
   deviceIdentifier: string | null;
   expiresAt: number;
+  session: NotificationSession;
 }
 
 function concatBytes(chunks: Uint8Array[]): Uint8Array {
@@ -221,17 +224,20 @@ export class NotificationsHub extends DurableObject<Env> {
         userId?: string;
         deviceIdentifier?: string | null;
         expiresAt?: number;
+        session?: NotificationSession;
       } | null;
       const token = String(body?.token || '').trim();
       const userId = String(body?.userId || '').trim();
       const expiresAt = Number(body?.expiresAt || 0);
-      if (!token || !userId || expiresAt <= Date.now() || expiresAt > Date.now() + WEBSOCKET_CONNECTION_TOKEN_TTL_MS) {
+      if (!token || !userId || expiresAt <= Date.now() || expiresAt > Date.now() + WEBSOCKET_CONNECTION_TOKEN_TTL_MS
+        || !isNotificationSession(body?.session) || body.session.sub !== userId) {
         return new Response('Invalid websocket connection token', { status: 400 });
       }
       await this.ctx.storage.put(`${WEBSOCKET_CONNECTION_TOKEN_PREFIX}${token}`, {
         userId,
         deviceIdentifier: String(body?.deviceIdentifier || '').trim() || null,
         expiresAt,
+        session: body.session,
       } satisfies WebSocketConnectionToken);
       const currentAlarm = await this.ctx.storage.getAlarm();
       if (currentAlarm === null || expiresAt < currentAlarm) {
@@ -283,7 +289,7 @@ export class NotificationsHub extends DurableObject<Env> {
           UserId: userId,
           Date: revisionDate,
         };
-      this.broadcastMessage(updateType, payload, contextId, targetDeviceIdentifier);
+      await this.broadcastMessage(updateType, payload, contextId, targetDeviceIdentifier);
       return new Response(null, { status: 204 });
     }
 
@@ -330,6 +336,15 @@ export class NotificationsHub extends DurableObject<Env> {
       return new Response('Unauthorized', { status: 401 });
     }
 
+    let session: NotificationSession | undefined;
+    if (!isAnonymousAuthRequestHub) {
+      try { session = JSON.parse(request.headers.get('X-NodeWarden-Session') || 'null'); } catch { /* reject below */ }
+      if (!isNotificationSession(session) || session.sub !== requestUserId
+        || !await isNotificationSessionCurrent(session, this.env)) {
+        return new Response('Unauthorized', { status: 401 });
+      }
+    }
+
     const pair = new WebSocketPair();
     const client = pair[0];
     const server = pair[1];
@@ -347,7 +362,13 @@ export class NotificationsHub extends DurableObject<Env> {
       handshakeComplete: false,
       protocol: 'messagepack',
       deviceIdentifier: requestDeviceIdentifier,
+      ...(session ? { session } : {}),
     } satisfies WsAttachment);
+
+    if (session) {
+      const alarm = await this.ctx.storage.getAlarm();
+      if (alarm === null || session.exp * 1000 < alarm) await this.ctx.storage.setAlarm(session.exp * 1000);
+    }
 
     return new Response(null, {
       status: 101,
@@ -373,12 +394,22 @@ export class NotificationsHub extends DurableObject<Env> {
 
     // Negotiated tickets that never reach an upgrade must not remain in DO storage indefinitely.
     if (expiredKeys.length > 0) await this.ctx.storage.delete(expiredKeys);
+    for (const ws of this.ctx.getWebSockets()) {
+      const attachment = ws.deserializeAttachment() as WsAttachment | null;
+      if (attachment?.kind !== 'user') continue;
+      if (!isNotificationSession(attachment.session)) {
+        ws.close(1008, 'Notification session expired');
+      } else if (nextExpiration === null || attachment.session.exp * 1000 < nextExpiration) {
+        nextExpiration = attachment.session.exp * 1000;
+      }
+    }
     if (nextExpiration !== null) await this.ctx.storage.setAlarm(nextExpiration);
   }
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer | ArrayBufferView): Promise<void> {
     const attachment = ws.deserializeAttachment() as WsAttachment | null;
     if (!attachment) return;
+    if (!await this.checkSession(ws, attachment)) return;
 
     if (!attachment.handshakeComplete) {
       const text = decodeIncomingMessage(message);
@@ -408,14 +439,16 @@ export class NotificationsHub extends DurableObject<Env> {
   }
 
   async webSocketClose(ws: WebSocket, code: number, reason: string, wasClean: boolean): Promise<void> {
-    void ws;
+    // Complete the close handshake even on the old compatibility date. This
+    // also lets actual WebSocket clients shut down cleanly in Miniflare.
+    ws.close(1000, 'Connection closed');
     void code;
     void reason;
     void wasClean;
   }
 
   async webSocketError(ws: WebSocket, error: unknown): Promise<void> {
-    void ws;
+    ws.close(1011, 'Notification connection error');
     void error;
   }
 
@@ -429,12 +462,23 @@ export class NotificationsHub extends DurableObject<Env> {
     return Array.from(out);
   }
 
-  private broadcastMessage(
+  private async checkSession(ws: WebSocket, attachment: WsAttachment): Promise<boolean> {
+    if (attachment.kind !== 'user') return true;
+    try {
+      if (await isNotificationSessionCurrent(attachment.session, this.env)) return true;
+      ws.close(1008, 'Notification session expired or revoked');
+    } catch {
+      ws.close(1011, 'Notification authentication unavailable');
+    }
+    return false;
+  }
+
+  private async broadcastMessage(
     updateType: number,
     payload: Record<string, unknown>,
     contextId: string | null,
     targetDeviceIdentifier: string | null
-  ): void {
+  ): Promise<void> {
     const sockets = targetDeviceIdentifier
       ? this.ctx.getWebSockets(`device:${targetDeviceIdentifier}`)
       : this.ctx.getWebSockets();
@@ -444,6 +488,7 @@ export class NotificationsHub extends DurableObject<Env> {
     for (const ws of sockets) {
       const attachment = ws.deserializeAttachment() as WsAttachment | null;
       if (!attachment?.handshakeComplete) continue;
+      if (!await this.checkSession(ws, attachment)) continue;
       try {
         if (attachment.protocol === 'json') {
           ws.send(buildSignalRJsonInvocation(updateType, payload, contextId));
