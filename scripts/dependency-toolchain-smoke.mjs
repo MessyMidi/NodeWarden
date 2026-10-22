@@ -6,18 +6,20 @@ import { createRequire } from 'node:module';
 // Exercise the exact Miniflare installed for Wrangler, including nested overrides.
 const require = createRequire(import.meta.url);
 const wranglerRequire = createRequire(require.resolve('wrangler/package.json'));
-const { Miniflare } = wranglerRequire('miniflare');
+const { Miniflare, convertV4MiniflareOptions } = wranglerRequire('miniflare');
 const bundleDir = process.argv[2] || 'build/dependency-audit';
 
 for (const variant of ['r2', 'kv']) {
-  const mf = new Miniflare({
-    modules: true,
-    scriptPath: path.join(bundleDir, `bundle-${variant}`, 'index.js'),
-    compatibilityDate: '2024-01-01',
+  // Wrangler 4.146 ships Miniflare 5. Use its supported V4 option converter.
+  const mf = new Miniflare(convertV4MiniflareOptions({
     host: '127.0.0.1',
     port: 0,
     inspectorPort: 0,
     cf: false,
+    name: 'local-nodewarden',
+    modules: true,
+    scriptPath: path.join(bundleDir, `bundle-${variant}`, 'index.js'),
+    compatibilityDate: '2024-01-01',
     // Login can schedule push registration. Keep all test egress local.
     outboundService: () => new Response('External requests disabled in local tests', { status: 503 }),
     bindings: { JWT_SECRET: 'local-audit-only-not-a-real-secret-1234567890' },
@@ -29,7 +31,7 @@ for (const variant of ['r2', 'kv']) {
       NOTIFICATIONS_HUB: { className: 'NotificationsHub', useSQLite: true },
       BACKUP_TRANSFER_RUNNER: { className: 'BackupTransferRunner', useSQLite: true },
     },
-  });
+  }));
 
   try {
     for (const [route, status] of [
@@ -133,11 +135,12 @@ for (const variant of ['r2', 'kv']) {
 }
 
 // NodeWarden does not bind Images. This separately exercises Miniflare's sharp adapter.
-const images = new Miniflare({
-  modules: true,
+const images = new Miniflare(convertV4MiniflareOptions({
   host: '127.0.0.1',
   port: 0,
   cf: false,
+  name: 'local-images',
+  modules: true,
   compatibilityDate: '2024-01-01',
   images: { binding: 'IMAGES' },
   script: `export default {
@@ -148,7 +151,7 @@ const images = new Miniflare({
       return image.response();
     }
   }`,
-});
+}));
 try {
   const response = await images.dispatchFetch('http://localhost/');
   assert.equal(response.status, 200, await response.clone().text());

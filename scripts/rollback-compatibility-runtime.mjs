@@ -40,6 +40,7 @@ let db;
 async function switchCode(name) {
   if (worker) await worker.dispose();
   const options = {
+    name: 'nodewarden-rollback-test',
     modules: true, scriptPath: path.join(output, name === 'candidate' ? 'bundle-r2' : `rollback-${name}`, 'index.js'),
     compatibilityDate: '2024-01-01', host: '127.0.0.1', port: 0, inspectorPort: 0, cf: false,
     bindings: { JWT_SECRET: 'local-rollback-only-not-a-production-secret' },
@@ -51,7 +52,11 @@ async function switchCode(name) {
       BACKUP_TRANSFER_RUNNER: { className: 'BackupTransferRunner', useSQLite: true },
     },
   };
-  worker = new Miniflare(convertV4MiniflareOptions ? convertV4MiniflareOptions(options) : options);
+  // Miniflare 5 removed d1Persist; its V4 converter silently omits that key.
+  // Set the new persistence root explicitly, otherwise a restart creates a new DB.
+  worker = new Miniflare(convertV4MiniflareOptions
+    ? { ...convertV4MiniflareOptions(options), resourcePersistencePath: temporary }
+    : options);
   const initialized = await worker.dispatchFetch('http://localhost/api/config');
   assert.equal(initialized.status, 200);
   await initialized.arrayBuffer();
